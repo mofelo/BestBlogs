@@ -7,76 +7,65 @@ import json
 import os
 import time
 
-# 配置（从环境变量获取）
+# ==================== 配置区 ====================
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHANNEL_ID = os.getenv('CHANNEL_ID')  # 例如: '@your_rss_channel' 或 '-1001234567890'
-OPML_URL = 'https://raw.githubusercontent.com/mofelo/BestBlogs/main/BestBlogs_RSS_ALL.opml'
-STATE_FILE = 'rss_state.json'  # 持久化文件
+CHANNEL_ID = os.getenv('CHANNEL_ID')
+
+# 关键：使用原作者永远有效的 OPML（等您以后想自己维护再改）
+OPML_URL = 'https://raw.githubusercontent.com/ginobefun/BestBlogs/main/BestBlogs_RSS_ALL.opml'
+
+STATE_FILE = 'rss_state.json'   # 用来记住每个 RSS 已经推到哪一条
+# ===============================================
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
 def parse_opml(url):
-    """解析 OPML 文件获取 RSS 源列表"""
-    response = requests.get(url)
-    root = ET.fromstring(response.content)
-    rss_feeds = []
-    for outline in root.findall('.//outline'):
-        if 'xmlUrl' in outline.attrib:
-            rss_feeds.append(outline.attrib['xmlUrl'])
-    return rss_feeds
+    r = requests.get(url)
+    root = ET.fromstring(r.content)
+    feeds = [item.get('xmlUrl') for item in root.findall('.//outline') if item.get('xmlUrl')]
+    return feeds
 
 def load_state():
-    """加载最后更新状态"""
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, 'r') as f:
+        with open(STATE_FILE) as f:
             return json.load(f)
     return {}
 
 def save_state(state):
-    """保存状态"""
     with open(STATE_FILE, 'w') as f:
         json.dump(state, f)
 
-def check_and_send_updates(rss_url, last_id):
-    """检查 RSS 更新并发送到 TG"""
-    feed = feedparser.parse(rss_url)
-    if not feed.entries:
-        return last_id
-    
-    new_entries = []
-    for entry in feed.entries:
-        entry_id = entry.get('id', entry.link)  # 使用 ID 或链接作为唯一标识
-        if entry_id != last_id:
-            new_entries.append(entry)
-    
-    for entry in reversed(new_entries):  # 最新先发
-        title = entry.get('title', '无标题')
-        summary = entry.get('summary', '')[:200] + '...' if entry.get('summary') else ''
-        link = entry.get('link', '')
-        message = f"<b>{title}</b>\n{summary}\n<a href='{link}'>阅读原文</a>"
-        try:
-            bot.send_message(chat_id=CHANNEL_ID, text=message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
-        except Exception as e:
-            print(f"发送消息失败: {e}")
-    
-    return feed.entries[0].get('id', feed.entries[0].link) if feed.entries else last_id
+def send(entry):
+    title = entry.get('title', '无标题')
+    link = entry.link
+    summary = (entry.get('summary') or '')[:250] + '...' if entry.get('summary') else ''
+    msg = f"<b>{title}</b>\n{summary}\n\n<a href='{link}'>阅读原文</a>"
+    bot.send_message(chat_id=CHANNEL_ID, text=msg, parse_mode=ParseMode.HTML,
+                     disable_web_page_preview=True)
 
 def main():
     feeds = parse_opml(OPML_URL)
     state = load_state()
-    updated = False
-    
-    for feed_url in feeds[:10]:  # 限前 10 个源，避免初始过载；后续可调整
-        last_id = state.get(feed_url, '')
-        new_id = check_and_send_updates(feed_url, last_id)
-        if new_id != last_id:
-            state[feed_url] = new_id
-            updated = True
-        time.sleep(1)  # 避免 API 限速
-    
-    if updated:
-        save_state(state)
-    print("RSS 检查完成")
+    pushed = 0
+
+    # 第一次建议只跑前 8~10 个源，避免刷屏
+    for url in feeds[:10]:
+        last_id = state.get(url, '')
+        feed = feedparser.parse(url)
+        if not feed.entries:
+            continue
+
+        new_entries = [e for e in feed.entries if e.get('id', e.link) != last_id]
+        for entry in reversed(new_entries[-5:]):   # 每个源最多发最新的 5 条
+            send(entry)
+            pushed += 1
+
+        if feed.entries:
+            state[url] = feed.entries[0].get('id', feed.entries[0].link)
+        time.sleep(1.5)   # 防止触发 Telegram 频率限制
+
+    save_state(state)
+    print(f"本次检查完成，共推送 {pushed} 条新文章")
 
 if __name__ == '__main__':
     main()
