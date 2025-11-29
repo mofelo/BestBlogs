@@ -10,7 +10,7 @@ import time
 # 配置（从环境变量获取）
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID')  # 例如: '@your_rss_channel' 或 '-1001234567890'
-OPML_URL = 'https://raw.githubusercontent.com/mofelo/BestBlogs/BestBlogs_RSS_ALL.opml'  # 您的分支 OPML
+OPML_URL = 'https://raw.githubusercontent.com/mofelo/BestBlogs/main/BestBlogs_RSS_ALL.opml'
 STATE_FILE = 'rss_state.json'  # 持久化文件
 
 bot = Bot(token=TELEGRAM_TOKEN)
